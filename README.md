@@ -15,7 +15,7 @@ The system captures **room temperature and humidity** using the Mickroe Click Bo
 | **ProtoShield**        | Agafia SG0 Shield (supports two MikroBus slots) |
 | **Click Boards**       | MicroSD Click & TempHum (HDC1080) Click |
 | **Display**           | SH1106 OLED |
-| **Flash/Debugger**     | STlink V3mini (using onboard STLink) |
+| **Flash/Debugger**     | STlink V3mini (using onboard STLink connector) |
 
 ---
 
