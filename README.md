@@ -1,5 +1,7 @@
 # Home Weather System using Agafia SG0+
 
+![Alt text](images/weatherstation.jpg)
+
 ## Overview
 Home Weather System is a demonstration project showcasing the capabilities of the **Agafia SG0+ development board**. It is designed for **hobbyists and students** to explore embedded systems and prototyping.
 
