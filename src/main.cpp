@@ -1,9 +1,5 @@
 #include <Arduino.h>
  
-/*
- * Based on Blink_AnalogRead example from: https://github.com/feilipu/Arduino_FreeRTOS_Library
- * Modified by: Frederic Pillon <frederic.pillon (at) st.com>
- */
 #include <STM32FreeRTOS.h>
 #include <STM32RTC.h>
 #include <MicroSD.h>
@@ -33,17 +29,39 @@ noDelay dataLogTimer(2000);
 void TaskBlink( void *pvParameters );
 void TaskDisplay(void *pvParameters);
 void TaskDataLogger( void *pvParameters );
+void TaskSerialHandler(void *pvParameters);
 void RTC_Setup();
+
+// At the top of your file with other globals
+SemaphoreHandle_t sdCardMutex;
+SemaphoreHandle_t rtcMutex;
+
+
 // the setup function runs once when you press reset or power the board
 void setup() {
 
   // initialize serial communication at 9600 bits per second:
   Serial.begin(115200);
   
-  while (!Serial) {
-    ; // wait for serial port to connect. Needed for native USB, on LEONARDO, MICRO, YUN, and other 32u4 based boards.
-  }
+  // while (!Serial) {
+  //   ; // wait for serial port to connect. Needed for native USB, on LEONARDO, MICRO, YUN, and other 32u4 based boards.
+  // }
   RTC_Setup();
+
+ //before creating tasks
+  sdCardMutex = xSemaphoreCreateMutex();
+  rtcMutex = xSemaphoreCreateMutex();
+
+  
+  if (sdCardMutex == NULL || rtcMutex == NULL) {
+    Serial.println("Failed to create mutexes");
+    pinMode(LED_BUILTIN, OUTPUT);
+    while(1); // Stop execution if mutex creation fails
+    {
+      digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+      delay(200);
+    }
+  }
 
   // Now set up two tasks to run independently.
   xTaskCreate(
@@ -65,10 +83,18 @@ void setup() {
   xTaskCreate(
     TaskDataLogger
     ,  (const portCHAR *) "HDCLog"
-    ,  512  // Stack size
+    ,  768  // Stack size
     ,  NULL
     ,  1  // Priority
     ,  NULL );
+
+    xTaskCreate(
+      TaskSerialHandler
+      ,  (const portCHAR *) "SerialHandler"
+      ,  768  // Stack size
+      ,  NULL
+      ,  1  // Priority
+      ,  NULL );
 
   // start scheduler
   vTaskStartScheduler();
@@ -78,40 +104,7 @@ void setup() {
 
 void loop()
 {
-  // Empty. Things are done in Tasks.
-
-  // for demonstration purpose, check in loop
-  if(Serial.available() > 0){
-    // read the incoming command
-    char command = Serial.read();
-    // check if the command is "set"
-      if(command == 's'){  
-      // read the incoming epoch time
-      String epochTime = Serial.readStringUntil('\n');
-      // convert to long
-      long epochTimeLong = epochTime.toInt();
-      //check if the epoch time is valid
-      if(epochTimeLong < 10000000000 && epochTimeLong > 0){
-        Serial.print("\nEpoch time: ");
-        Serial.println(epochTimeLong);
-        rtc.setEpoch(epochTimeLong);
-      } else{
-        Serial.println("\nInvalid epoch time. Please enter a valid epoch time.");
-      }
-    }
-    else if(command == 'f'){
-      Serial.println("\nFormatting SD card...");
-      // format the SD card
-      SD_Format(); 
-    }else if(command == 'r'){
-      Serial.println("\nRead SD card...");
-      // format the SD card
-      SD_PrintFile(); 
-    } 
-    else{
-      Serial.println("\nInvalid command. Please enter a valid command.");
-    }
-  }
+  // Empty. Things are done in Tasks. 
 }
 
 /*--------------------------------------------------*/
@@ -145,8 +138,11 @@ void TaskDisplay(void *pvParameters)  // This is a task.
   Display_UpdateScreen();
  
   for (;;) // A Task shall never return or exit.
-  { 
-    Display_Weather(rtc.getHours(), rtc.getMinutes(), rtc.getSeconds(), rtc.getWeekDay());
+  {  
+    if(uxSemaphoreGetCount(rtcMutex) > 0) { // verify if the mutex is available
+      xSemaphoreTake(rtcMutex, portMAX_DELAY);
+      Display_Weather(rtc.getHours(), rtc.getMinutes(), rtc.getSeconds(), rtc.getWeekDay());
+    }
     vTaskDelay( 1000 / portTICK_PERIOD_MS ); // wait for 2.5 second 
   }
 }
@@ -161,13 +157,62 @@ void TaskDataLogger(void *pvParameters)  // This is a task.
 
   for (;;)
   { 
-   
     TempHum_Loop(); // read the temperature and humidity
-    
-    SD_WriteHDC(rtc.getEpoch(), TempHum_Process(HDC_TEMP),TempHum_Process(HDC_HUM)); 
-   
 
+    // Reading time
+    if (xSemaphoreTake(rtcMutex, portMAX_DELAY) == pdTRUE) {
+      uint32_t epoch = rtc.getEpoch();
+      xSemaphoreGive(rtcMutex); 
+      
+      if (xSemaphoreTake(sdCardMutex, portMAX_DELAY) == pdTRUE) {
+        SD_WriteHDC(epoch, TempHum_Process(HDC_TEMP), TempHum_Process(HDC_HUM));
+        xSemaphoreGive(sdCardMutex);
+      } 
+    }
+  
     vTaskDelay( 5000 / portTICK_PERIOD_MS ); // wait for one second 
+  }
+}
+
+void TaskSerialHandler(void *pvParameters) {
+  (void) pvParameters;
+  
+  for (;;) {
+     
+    // Check if the SD card mutex is available
+    if (uxSemaphoreGetCount(sdCardMutex) == 0 || uxSemaphoreGetCount(rtcMutex) == 0){     
+      // the mutex is not available!
+    }
+    else {      
+      if(Serial.available() > 0) {
+        char command = Serial.read();
+        
+        if(command == 's') {
+          // Handle epoch time setting
+          String epochTime = Serial.readStringUntil('\n');
+          long epochTimeLong = epochTime.toInt();
+          if(epochTimeLong < 10000000000 && epochTimeLong > 0) {
+            Serial.print("\nEpoch time: ");
+            Serial.println(epochTimeLong);
+            rtc.setEpoch(epochTimeLong);
+          } else {
+            Serial.println("\nInvalid epoch time. Please enter a valid epoch time.");
+          }
+        }
+        else if(command == 'f') {
+          Serial.println("\nFormatting SD card...");
+          SD_Format();
+        }
+        else if(command == 'r') {
+          Serial.println("\nRead SD card...");
+          SD_PrintFile();
+        }
+        else {
+          Serial.println("\nInvalid command. Please enter a valid command.");
+        }
+      }
+    }
+    vTaskDelay(50 / portTICK_PERIOD_MS); // Small delay to prevent CPU hogging
   }
 }
 
@@ -178,16 +223,17 @@ void RTC_Setup()
 
   rtc.begin(); // initialize RTC 24H format
 
-  // Set the time
-  rtc.setHours(hours);
-  rtc.setMinutes(minutes);
-  rtc.setSeconds(seconds);
-
-  // Set the date
-  rtc.setWeekDay(weekDay);
-  rtc.setDay(day);
-  rtc.setMonth(month);
-  rtc.setYear(year);
-
-  rtc.setEpoch(1745992510); // set the epoch time
+  if (!rtc.isTimeSet()) {
+    Serial.println("RTC time not set. Using default time.");
+    // rtc.setHours(hours);
+    // rtc.setMinutes(minutes);
+    // rtc.setSeconds(seconds);
+    // rtc.setWeekDay(weekDay);
+    // rtc.setDay(day);
+    // rtc.setMonth(month);
+    // rtc.setYear(year);
+    rtc.setEpoch(1745992510); // Default epoch time
+  } else {
+    Serial.println("RTC time already set.");
+  }
 }

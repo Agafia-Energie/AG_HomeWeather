@@ -8,21 +8,20 @@
  ** SDO - pin 11
  ** SDI - pin 12
  ** CLK - pin 13
- ** CS - pin 4 (For For Uno, Nano: pin 10. For MKR Zero SD: SDCARD_SS_PIN)
-
-  created   Nov 2010
-  by David A. Mellis
-  modified  24 July 2020
-  by Tom Igoe
+ ** CS  - pin 10  (Chip Select for AGFIA SD card module on MikroBus 1)
+  Note:
+  If you have a shield, check the documentation for the correct CS pin.
+  If you are using a module, check the documentation for the correct CS pin.
 
   This example code is in the public domain.
+  http://www.arduino.cc/en/Tutorial/SDCard
 
 */
 #include "Arduino.h"
 #include <SD.h>
 #include <TimeLib.h>
 
-const char filename[] = "datalogger.txt"; // File name to be created on SD card
+const char filename[] = "datalog.txt"; // File name to be created on SD card
 const int chipSelect = PB0;
 bool isSDCardPresent = false; // Flag to check if SD card is present
 File myFile;
